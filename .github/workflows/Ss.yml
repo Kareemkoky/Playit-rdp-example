@@ -1,36 +1,52 @@
-name: Shadowsocks + playit.gg Agent
+name: Debug Shadowsocks + playit.gg
 
 on:
   workflow_dispatch:
 
 jobs:
-  start-ss-playit:
+  debug-ss-playit:
     runs-on: ubuntu-latest
-
     steps:
-    - name: تثبيت Shadowsocks و playit
+    - name: تثبيت الأدوات
       run: |
         sudo apt update
         sudo apt install -y shadowsocks-libev wget tar
 
-        # إعداد Shadowsocks
+    - name: إعداد Shadowsocks
+      run: |
         cat > config.json <<EOF
         {
-          "server": "0.0.0.0",
-          "server_port": 1080,
-          "password": "mypassword123",
-          "timeout": 300,
-          "method": "aes-256-gcm"
+          "server":"0.0.0.0",
+          "server_port":1080,
+          "password":"mypassword123",
+          "timeout":300,
+          "method":"aes-256-gcm"
         }
         EOF
 
-        # تشغيل Shadowsocks
+    - name: تشغيل Shadowsocks في الخلفية
+      run: |
         nohup ss-server -c config.json > ss.log 2>&1 &
+        sleep 2
+        echo "== Shadowsocks Log =="
+        tail -n 20 ss.log
 
-        # تحميل playit
+    - name: تنزيل وتشغيل playit auth
+      env:
+        PL: ${{ secrets.PL }}
+      run: |
         wget -qO playit.tar.gz https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64.tar.gz
         tar -xzf playit.tar.gz
         chmod +x playit
+        # نجرب أولاً auth بشكل منفصل
+        ./playit auth --token "$PL" > playit-auth.log 2>&1 || (echo 'Auth failed:'; cat playit-auth.log; exit 1)
+        echo "Auth succeeded"
+        tail -n 20 playit-auth.log
 
-        # توصيل playit باستخدام التوكن (Agent معرف بالفعل)
-        nohup ./playit auth --token ${{ secrets.PL }} && ./playit > playit.log 2>&1 &
+    - name: إنشاء وتشغيل Tunnel
+      run: |
+        ./playit tunnel add --name ss-debug --protocol tcp --local-port 1080 > playit-add.log 2>&1 || (echo 'Add tunnel failed:'; cat playit-add.log; exit 1)
+        echo "Tunnel created"
+        ./playit tunnel run --name ss-debug --print-url > playit-run.log 2>&1 || (echo 'Run tunnel failed:'; cat playit-run.log; exit 1)
+        echo "Tunnel URL:"
+        cat playit-run.log
