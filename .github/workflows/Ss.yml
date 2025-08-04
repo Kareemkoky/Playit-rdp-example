@@ -1,0 +1,36 @@
+name: Shadowsocks + playit.gg Agent
+
+on:
+  workflow_dispatch:
+
+jobs:
+  start-ss-playit:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: تثبيت Shadowsocks و playit
+      run: |
+        sudo apt update
+        sudo apt install -y shadowsocks-libev wget tar
+
+        # إعداد Shadowsocks
+        cat > config.json <<EOF
+        {
+          "server": "0.0.0.0",
+          "server_port": 1080,
+          "password": "mypassword123",
+          "timeout": 300,
+          "method": "aes-256-gcm"
+        }
+        EOF
+
+        # تشغيل Shadowsocks
+        nohup ss-server -c config.json > ss.log 2>&1 &
+
+        # تحميل playit
+        wget -qO playit.tar.gz https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64.tar.gz
+        tar -xzf playit.tar.gz
+        chmod +x playit
+
+        # توصيل playit باستخدام التوكن (Agent معرف بالفعل)
+        nohup ./playit auth --token ${{ secrets.PL }} && ./playit > playit.log 2>&1 &
