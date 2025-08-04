@@ -1,18 +1,18 @@
-name: Debug Shadowsocks + playit.gg
+name: Start Shadowsocks & playit Tunnel
 
 on:
   workflow_dispatch:
 
 jobs:
-  debug-ss-playit:
+  deploy:
     runs-on: ubuntu-latest
     steps:
-    - name: تثبيت الأدوات
+    - name: تثبيت Shadowsocks
       run: |
         sudo apt update
-        sudo apt install -y shadowsocks-libev wget tar
+        sudo apt install -y shadowsocks-libev
 
-    - name: إعداد Shadowsocks
+    - name: إعداد ملف Shadowsocks
       run: |
         cat > config.json <<EOF
         {
@@ -24,29 +24,25 @@ jobs:
         }
         EOF
 
-    - name: تشغيل Shadowsocks في الخلفية
+    - name: تشغيل Shadowsocks
       run: |
         nohup ss-server -c config.json > ss.log 2>&1 &
-        sleep 2
-        echo "== Shadowsocks Log =="
-        tail -n 20 ss.log
+        sleep 3
+        echo "[✓] Shadowsocks is running"
+        tail -n 10 ss.log || true
 
-    - name: تنزيل وتشغيل playit auth
+    - name: تحميل وتشغيل playit.gg
       env:
         PL: ${{ secrets.PL }}
       run: |
-        wget -qO playit.tar.gz https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64.tar.gz
+        wget -qO playit.tar.gz https://github.com/playit-cloud/playit-agent/releases/download/v0.15.26/playit-linux-amd64.tar.gz
         tar -xzf playit.tar.gz
         chmod +x playit
-        # نجرب أولاً auth بشكل منفصل
-        ./playit auth --token "$PL" > playit-auth.log 2>&1 || (echo 'Auth failed:'; cat playit-auth.log; exit 1)
-        echo "Auth succeeded"
-        tail -n 20 playit-auth.log
 
-    - name: إنشاء وتشغيل Tunnel
-      run: |
-        ./playit tunnel add --name ss-debug --protocol tcp --local-port 1080 > playit-add.log 2>&1 || (echo 'Add tunnel failed:'; cat playit-add.log; exit 1)
-        echo "Tunnel created"
-        ./playit tunnel run --name ss-debug --print-url > playit-run.log 2>&1 || (echo 'Run tunnel failed:'; cat playit-run.log; exit 1)
-        echo "Tunnel URL:"
-        cat playit-run.log
+        echo "[✓] Authenticating with token..."
+        ./playit auth --token "$PL" || (echo "[×] Auth failed"; exit 1)
+
+        echo "[✓] Starting playit tunnel..."
+        nohup ./playit > playit.log 2>&1 &
+        sleep 5
+        tail -n 10 playit.log || true
