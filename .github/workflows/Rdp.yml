@@ -1,42 +1,56 @@
-name: Playit RDP Tunnel
+name: Playit RDP with Proxy
 
 on:
   workflow_dispatch:
 
 jobs:
-  setup-rdp-tunnel:
+  setup-rdp-playit-proxy:
     runs-on: windows-latest
 
     steps:
-    - name: Check out the repository
+    - name: Checkout repo
       uses: actions/checkout@v2
 
-    - name: Download and extract 3proxy
-      run: |
-        Invoke-WebRequest -Uri "https://github.com/3proxy/3proxy/releases/download/0.9.5/3proxy-0.9.5-x64.zip" -OutFile "$env:USERPROFILE\3proxy.zip"
-        Expand-Archive -Path "$env:USERPROFILE\3proxy.zip" -DestinationPath "$env:USERPROFILE\3proxy"
-        Set-Location "$env:USERPROFILE\3proxy\bin"
-        echo "socks -p1080" > "$env:USERPROFILE\3proxy\bin\3proxy.cfg"
-        Start-Process -FilePath "$env:USERPROFILE\3proxy\bin\3proxy.exe" -ArgumentList "3proxy.cfg"
-
+    # تثبيت Playit
     - name: Download and Install Playit
       run: |
         Invoke-WebRequest -Uri "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.26/playit-windows-x86_64-signed.exe" -OutFile "$env:USERPROFILE\playit.exe"
         Start-Sleep -Seconds 5
 
-    - name: Enable TS
-      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
-    - run: Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-    - run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
-    - run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "p@ssw0rd!" -Force)
+    # تفعيل RDP
+    - name: Enable Remote Desktop
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+        Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "p@ssw0rd!" -Force)
 
-    - name: Start Playit and Set Up RDP Tunnel
+    # تشغيل Playit
+    - name: Start Playit Tunnel
       env:
         PLAYIT_AUTH_KEY: ${{ secrets.PL }}
       run: |
-        Start-Process -FilePath "$env:USERPROFILE\playit.exe" -ArgumentList "--secret $env:PLAYIT_AUTH_KEY" -NoNewWindow -Wait
-        Start-Process -FilePath "$env:USERPROFILE\playit.exe" -NoNewWindow
+        Start-Process -FilePath "$env:USERPROFILE\playit.exe" -ArgumentList "--secret $env:PLAYIT_AUTH_KEY" -NoNewWindow
+        Start-Sleep -Seconds 15
 
-    - name: Keep the GitHub Action Runner Alive
+    # تحميل وتكوين 3proxy
+    - name: Download and Configure 3proxy
       run: |
-        Start-Sleep -Seconds 11800
+        Invoke-WebRequest -Uri "https://github.com/3proxy/3proxy/releases/download/0.9.5/3proxy-0.9.5-x64.zip" -OutFile "$env:USERPROFILE\3proxy.zip"
+        Expand-Archive -Path "$env:USERPROFILE\3proxy.zip" -DestinationPath "$env:USERPROFILE\3proxy"
+        Set-Content -Path "$env:USERPROFILE\3proxy\3proxy.cfg" -Value @"
+auth strong
+users kareem:CL:123456
+proxy -p3128
+flush
+"@
+
+    # تشغيل البروكسي
+    - name: Start 3proxy
+      run: |
+        Start-Process "$env:USERPROFILE\3proxy\3proxy.exe" -ArgumentList "$env:USERPROFILE\3proxy\3proxy.cfg" -NoNewWindow
+        Start-Sleep -Seconds 15
+
+    # الحفاظ على التشغيل لمدة 6 ساعات
+    - name: Keep session alive
+      run: Start-Sleep -Seconds 21600  # 6 ساعات
