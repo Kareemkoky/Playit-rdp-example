@@ -13,30 +13,49 @@ jobs:
 
     - name: Download and Install Playit
       run: |
-        Invoke-WebRequest -Uri "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.26/playit-windows-x86_64-signed.exe" -OutFile "$env:USERPROFILE\playit.exe"
-        Start-Sleep -Seconds 5  # Give some time for the download to complete
+        Invoke-WebRequest -Uri "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.26/playit-windows-x86_64-signed.exe" `
+          -OutFile "$env:USERPROFILE\playit.exe"
+        Start-Sleep -Seconds 5
 
-    # Enable Remote Desktop
     - name: Enable TS
-      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
+      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+        -name "fDenyTSConnections" -Value 0
     - run: Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-    - run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
-    - run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "p@ssw0rd!" -Force)
+    - run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+        -name "UserAuthentication" -Value 1
+    - run: Set-LocalUser -Name "runneradmin" `
+        -Password (ConvertTo-SecureString -AsPlainText "p@ssw0rd!" -Force)
 
-    # ✅ تشغيل بروكسي (socks5 proxy على localhost:1080)
-    - name: Start Proxy Server
+    - name: Start Shadowsocks Proxy (SOCKS5 on port 1080)
+      shell: pwsh
       run: |
-        Invoke-WebRequest -Uri "https://github.com/rofl0r/proxy/releases/download/v0.7.0/proxy.exe" -OutFile "$env:USERPROFILE\proxy.exe"
-        Start-Process -FilePath "$env:USERPROFILE\proxy.exe" -ArgumentList "-p", "1080", "-s"  # يشغل SOCKS5 proxy على البورت 1080
+        $ssVer = '4.4.1.0'
+        $url = "https://downloads.sourceforge.net/project/shadowsocks-for-windows/Shadowsocks-$ssVer.zip"
+        Write-Host "Downloading Shadowsocks v$ssVer..."
+        Invoke-WebRequest -Uri $url `
+          -OutFile "$env:USERPROFILE\Shadowsocks.zip" `
+          -UseBasicParsing -ErrorAction Stop
+        Expand-Archive "$env:USERPROFILE\Shadowsocks.zip" `
+          -DestinationPath "$env:USERPROFILE\Shadowsocks" -Force
+        Remove-Item "$env:USERPROFILE\Shadowsocks.zip"
+        $exe = "$env:USERPROFILE\Shadowsocks\Shadowsocks.exe"
+        Write-Host "Launching Shadowsocks..."
+        Start-Process -FilePath $exe `
+          -ArgumentList "--server 0.0.0.0 --server-port 1080 --mode tcp_and_udp" `
+          -NoNewWindow
+        Start-Sleep -Seconds 8
 
-    # ✅ تشغيل Playit بعد كده
     - name: Start Playit and Set Up RDP Tunnel
       env:
         PLAYIT_AUTH_KEY: ${{ secrets.PL }}
+      shell: pwsh
       run: |
-        Start-Process -FilePath "$env:USERPROFILE\playit.exe" -ArgumentList "--secret $env:PLAYIT_AUTH_KEY" -NoNewWindow -Wait
+        Start-Process -FilePath "$env:USERPROFILE\playit.exe" `
+          -ArgumentList "--secret $env:PLAYIT_AUTH_KEY" `
+          -NoNewWindow -Wait
+        Start-Process -FilePath "$env:USERPROFILE\playit.exe" `
+          -NoNewWindow
 
-    # Keep alive
     - name: Keep the GitHub Action Runner Alive
       run: |
-          Start-Sleep -Seconds 11800
+        Start-Sleep -Seconds 11800
