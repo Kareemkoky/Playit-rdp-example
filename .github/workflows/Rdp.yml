@@ -79,7 +79,7 @@ jobs:
       run: |
         cd $WORKDIR
         PLAYIT_VER="v0.15.26"
-        wget -q "https://github.com/playit-cloud/playit-agent/releases/download/${PLAYIT_VER}/playit-linux-x86_64" -O playit
+        wget -q "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.26/playit-windows-x86_64-signed.exe" -O playit
         chmod +x playit
         sudo mv playit /usr/local/bin/playit
 
