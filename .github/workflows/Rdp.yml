@@ -1,36 +1,127 @@
-name: Playit RDP Tunnel      
-       
-on:      
-  workflow_dispatch:      
-       
-jobs:      
-  setup-rdp-tunnel:      
-    runs-on: windows-latest      
-       
-    steps:      
-    - name: Check out the repository      
-      uses: actions/checkout@v2      
-       
-    - name: Download and Install Playit      
-      run: |      
-        Invoke-WebRequest -Uri "https://github.com/playit-cloud/playit-agent/releases/download/v0.15.26/playit-windows-x86_64-signed.exe" -OutFile "$env:USERPROFILE\playit.exe"      
-        Start-Sleep -Seconds 5  # Give some time for the download to complete      
-              
-    # Default, optional.      
-    - name: Enable TS      
-      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server'-name "fDenyTSConnections" -Value 0      
-    - run: Enable-NetFirewallRule -DisplayGroup "Remote Desktop"      
-    - run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1      
-    - run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "p@ssw0rd!" -Force)      
-       
-    - name: Start Playit and Set Up RDP Tunnel      
-      env:      
-        PLAYIT_AUTH_KEY: ${{ secrets.PL }}       
-      run: |      
-        Start-Process -FilePath "$env:USERPROFILE\playit.exe" -ArgumentList "--secret $env:PLAYIT_AUTH_KEY" -NoNewWindow -Wait      
-        Start-Process -FilePath "$env:USERPROFILE\playit.exe" -NoNewWindow      
-              
-    # Prevent workflow to stop      
-    - name: Keep the GitHub Action Runner Alive      
-      run: |      
-          Start-Sleep -Seconds 11800  # Adjust the duration based on your needs      
+name: Playit WireGuard Server + Tunnel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup-wireguard-playit:
+    runs-on: ubuntu-latest
+    env:
+      PLAYIT_AUTH_KEY: ${{ secrets.PL }}        # لا تنسّي تحط secret اسمه PL
+      CLIENT_PRIVATE_KEY: ${{ secrets.CLIENT_PRIVATE_KEY || '' }}  # اختياري: لو عندك private key للـ Android عيّنه كـ secret
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y wireguard iproute2 iptables resolvconf qrencode curl
+
+    - name: Generate server keys and client key (if not provided)
+      run: |
+        mkdir -p $RUNNER_TEMP/playit-wg
+        cd $RUNNER_TEMP/playit-wg
+
+        # Server keypair
+        wg genkey | tee server_private.key | wg pubkey > server_public.key
+
+        # Client key: use provided secret if exists, else generate
+        if [ -z "$CLIENT_PRIVATE_KEY" ]; then
+          wg genkey | tee client_private.key | wg pubkey > client_public.key
+          echo "CLIENT_KEY_SOURCE=generated" > key_source.txt
+        else
+          echo "$CLIENT_PRIVATE_KEY" > client_private.key
+          echo "$CLIENT_PRIVATE_KEY" | wg pubkey > client_public.key
+          echo "CLIENT_KEY_SOURCE=provided" > key_source.txt
+        fi
+
+        # Expose contents for next steps
+        echo "SERVER_PRIV=$(cat server_private.key)" >> $GITHUB_ENV
+        echo "SERVER_PUB=$(cat server_public.key)" >> $GITHUB_ENV
+        echo "CLIENT_PRIV=$(cat client_private.key)" >> $GITHUB_ENV
+        echo "CLIENT_PUB=$(cat client_public.key)" >> $GITHUB_ENV
+        echo "WORKDIR=$RUNNER_TEMP/playit-wg" >> $GITHUB_ENV
+
+    - name: Configure WireGuard server (wg0)
+      run: |
+        cd $WORKDIR
+        SERVER_PRIV="$SERVER_PRIV"
+        CLIENT_PUB="$CLIENT_PUB"
+
+        sudo tee /etc/wireguard/wg0.conf > /dev/null <<EOF
+        [Interface]
+        Address = 10.66.66.1/24
+        ListenPort = 51820
+        PrivateKey = ${SERVER_PRIV}
+        SaveConfig = true
+
+        # Client peer (Android)
+        [Peer]
+        PublicKey = ${CLIENT_PUB}
+        AllowedIPs = 10.66.66.2/32
+        EOF
+
+        sudo sysctl -w net.ipv4.ip_forward=1
+        # NAT for outgoing traffic
+        sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE || true
+
+        sudo chmod 600 /etc/wireguard/wg0.conf
+
+    - name: Start WireGuard
+      run: |
+        sudo wg-quick up wg0 || (sudo wg-quick down wg0 && sudo wg-quick up wg0) || true
+        # show status
+        sudo wg
+
+    - name: Install playit agent (linux)
+      run: |
+        cd $WORKDIR
+        PLAYIT_VER="v0.15.26"
+        wget -q "https://github.com/playit-cloud/playit-agent/releases/download/${PLAYIT_VER}/playit-linux-x86_64" -O playit
+        chmod +x playit
+        sudo mv playit /usr/local/bin/playit
+
+    - name: Start playit agent (background)
+      run: |
+        mkdir -p $HOME/.playit
+        # run with secret (registers the runner)
+        /usr/local/bin/playit --secret "${PLAYIT_AUTH_KEY}" &> $WORKDIR/playit.log &
+        sleep 6
+        tail -n +1 $WORKDIR/playit.log || true
+
+    - name: Wait for playit to initialize
+      run: |
+        # Give playit a little time to register
+        sleep 8
+        echo "Playit log:"
+        tail -n 200 $WORKDIR/playit.log || true
+
+    - name: Print instructions & client config (placeholder endpoint)
+      run: |
+        echo "=== WIREGUARD CLIENT CONFIG (PLACEHOLDER for <PLAYIT_ENDPOINT>) ==="
+        cat <<'EOF'
+        [Interface]
+        PrivateKey = ${CLIENT_PRIV}
+        Address = 10.66.66.2/32
+        DNS = 1.1.1.1
+        MTU = 1280
+
+        [Peer]
+        PublicKey = ${SERVER_PUB}
+        AllowedIPs = 0.0.0.0/0, ::/0
+        Endpoint = <PLAYIT_ENDPOINT>:<PORT>
+        PersistentKeepalive = 25
+        EOF
+
+        echo ""
+        echo ">> To get the real <PLAYIT_ENDPOINT> visit your Playit dashboard (https://dash.playit.gg) or check the playit.log file above"
+        echo ">> playit.log is at: $WORKDIR/playit.log (look for created tunnels or assigned endpoints)"
+        echo ">> If you want me to auto-create a tunnel, Playit needs a tunnel definition created via dashboard or CLI. I can provide CLI steps if you want."
+
+    - name: Save artifacts (wg keys and logs)
+      uses: actions/upload-artifact@v4
+      with:
+        name: playit-wg-debug
+        path: $WORKDIR
