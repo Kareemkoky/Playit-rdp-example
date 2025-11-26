@@ -6,6 +6,9 @@ on:
 jobs:
   setup-wireguard-playit:
     runs-on: ubuntu-latest
+    timeout-minutes: 360   # أقصى حد عملي على GitHub-hosted (6 ساعات)
+    steps:
+      - name: ...
     env:
       PLAYIT_AUTH_KEY: ${{ secrets.PL }}        # لا تنسّي تحط secret اسمه PL
       CLIENT_PRIVATE_KEY: ${{ secrets.CLIENT_PRIVATE_KEY || '' }}  # اختياري: لو عندك private key للـ Android عيّنه كـ secret
